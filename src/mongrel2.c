@@ -48,7 +48,7 @@
 #include "dir.h"
 #include "task/task.h"
 #include "config/config.h"
-#include "config/db.h"
+//#include "config/db.h"
 #include "adt/darray.h"
 #include "unixy.h"
 #include "mime.h"
@@ -75,6 +75,7 @@ struct ServerTask {
 struct tagbstring PRIV_DIR = bsStatic("/");
 
 Task *RELOAD_TASK = NULL;
+lua_State *L;
 
 
 // =================== Daogang Tang  ======================
@@ -148,7 +149,7 @@ void start_terminator()
 }
 
 
-Server *load_server(const char *config_file, const char *server_uuid, Server *old_srv)
+Server *load_server(lua_State *L, const char *config_file, const char *server_name, Server *old_srv)
 {
     int rc = 0;
     Server *srv =  NULL;
@@ -156,15 +157,15 @@ Server *load_server(const char *config_file, const char *server_uuid, Server *ol
     rc = load_luaconfig(L, config_file);
     check(rc == 0, "Failed to load config file at %s", config_file);
     
-    rc = Config_load_settings();
+    rc = Config_load_settings(L);
     check(rc != -1, "Failed to load global settings.");
 
-    rc = Config_load_mimetypes();
+    rc = Config_load_mimetypes(L);
     check(rc != -1, "Failed to load mime types.");
 
-    srv = Config_load_server(server_uuid);
-    check(srv, "Failed to load server %s from %s", server_uuid, db_file);
-    check(srv->default_host, "No default_host set for server: %s, you need one host named: %s", server_uuid, bdata(srv->default_hostname));
+    srv = Config_load_server(L, server_name);
+    check(srv, "Failed to load server %s from %s", server_name, config_file);
+    check(srv->default_host, "No default_host set for server: %s, you need one host named: %s", server_name, bdata(srv->default_hostname));
 
     if(old_srv == NULL || old_srv->listen_fd == -1) {
         srv->listen_fd = netannounce(TCP, bdata(srv->bind_addr), srv->port);
@@ -297,13 +298,13 @@ void final_setup()
 
 
 
-Server *reload_server(Server *old_srv, const char *db_file, const char *server_uuid)
+Server *reload_server(lua_State *L, Server *old_srv, const char *config_file, const char *server_name)
 {
-    log_info("------------------------ RELOAD %s -----------------------------------", server_uuid);
+    log_info("------------------------ RELOAD %s -----------------------------------", server_name);
     MIME_destroy();
     Setting_destroy();
 
-    Server *srv = load_server(db_file, server_uuid, old_srv);
+    Server *srv = load_server(L, config_file, server_name, old_srv);
     check(srv != NULL, "Failed to load new server config.");
 
     Server_stop_handlers(old_srv);
@@ -372,7 +373,7 @@ void reload_task(void *data)
         if(RELOAD) {
             log_info("Reload requested, will load %s from %s", bdata(srv->db_file), bdata(srv->server_id));
             Server *old_srv = Server_queue_latest();
-            Server *new_srv = reload_server(old_srv, bdata(srv->db_file), bdata(srv->server_id));
+            Server *new_srv = reload_server(L, old_srv, bdata(srv->db_file), bdata(srv->server_id));
             check(new_srv, "Failed to load the new configuration, exiting.");
 
             // for this to work handlers need to die more gracefully
@@ -390,23 +391,22 @@ error:
 
 void taskmain(int argc, char **argv)
 {
-	lua_State *L;
 	L = luaL_newstate();
 
     dbg_set_log(stderr);
     int rc = 0;
 
-    check(argc == 3 || argc == 4, "usage: mongrel2 config.sqlite server_uuid [config_module.so]");
+    check(argc == 3, "usage: mongrel2 config.lua server_name");
 
-    if(argc == 4) {
-        log_info("Using configuration module %s to load configs.", argv[3]);
-        rc = Config_module_load(argv[3]);
-        check(rc != -1, "Failed to load the config module: %s", argv[3]);
-    }
+    //if(argc == 4) {
+    //    log_info("Using configuration module %s to load configs.", argv[3]);
+    //    rc = Config_module_load(argv[3]);
+    //    check(rc != -1, "Failed to load the config module: %s", argv[3]);
+    //}
 
     Server_queue_init();
 
-    Server *srv = load_server(argv[1], argv[2], NULL);
+    Server *srv = load_server(L, argv[1], argv[2], NULL);
     check(srv != NULL, "Aborting since can't load server.");
     Server_queue_push(srv);
 
@@ -426,7 +426,7 @@ void taskmain(int argc, char **argv)
     srv_data->db_file = bfromcstr(argv[1]);
     srv_data->server_id = bfromcstr(argv[2]);
 
-    taskcreate(reload_task, srv_data, RELOAD_TASK_STACK);
+//    taskcreate(reload_task, srv_data, RELOAD_TASK_STACK);
 
     rc = Server_run();
     check(rc != -1, "Server had a failure and exited early.");

@@ -16,7 +16,7 @@ TEST_SRC=$(wildcard tests/*_tests.c)
 TESTS=$(patsubst %.c,%,${TEST_SRC})
 MAKEOPTS=OPTFLAGS="${NOEXTCFLAGS} ${OPTFLAGS}" OPTLIBS="${OPTLIBS}" LIBS="${LIBS}" DESTDIR="${DESTDIR}" PREFIX="${PREFIX}"
 
-all: bin/mongrel2 tests m2sh procer
+all: bin/monserver #tests m2sh procer
 
 dev: CFLAGS=-g -Wall -Isrc -Wall -Wextra $(OPTFLAGS) -D_FILE_OFFSET_BITS=64
 dev: all
@@ -25,7 +25,7 @@ ${OBJECTS_NOEXT}: CFLAGS += ${NOEXTCFLAGS}
 
 
 
-bin/mongrel2: build/libm2.a src/mongrel2.o
+bin/monserver: build/libm2.a src/mongrel2.o
 	$(CC) $(CFLAGS) src/mongrel2.o -o $@ $< $(LIBS)
 
 build/libm2.a: CFLAGS += -fPIC
@@ -63,17 +63,17 @@ pristine: clean
 	${MAKE} -C tools/m2sh pristine
 	${MAKE} -C tools/procer pristine
 
-.PHONY: tests
-tests: tests/config.sqlite ${TESTS} test_filters filters config_modules
-	sh ./tests/runtests.sh
+#.PHONY: tests
+#tests: tests/config.sqlite ${TESTS} test_filters filters config_modules
+#	sh ./tests/runtests.sh
 
-tests/config.sqlite: src/config/config.sql src/config/example.sql src/config/mimetypes.sql
-	sqlite3 $@ < src/config/config.sql
-	sqlite3 $@ < src/config/example.sql
-	sqlite3 $@ < src/config/mimetypes.sql
+#tests/config.sqlite: src/config/config.sql src/config/example.sql src/config/mimetypes.sql
+#	sqlite3 $@ < src/config/config.sql
+#	sqlite3 $@ < src/config/example.sql
+#	sqlite3 $@ < src/config/mimetypes.sql
 
-$(TESTS): %: %.c build/libm2.a
-	$(CC) $(CFLAGS) -o $@ $< build/libm2.a $(LIBS)
+#$(TESTS): %: %.c build/libm2.a
+#	$(CC) $(CFLAGS) -o $@ $< build/libm2.a $(LIBS)
 
 src/state.c: src/state.rl src/state_machine.rl
 src/http11/http11_parser.c: src/http11/http11_parser.rl
@@ -83,28 +83,28 @@ check:
 	@echo Files with potentially dangerous functions.
 	@egrep '[^_.>a-zA-Z0-9](str(n?cpy|n?cat|xfrm|n?dup|str|pbrk|tok|_)|stpn?cpy|a?sn?printf|byte_)' $(filter-out src/bstr/bsafe.c,${SOURCES})
 
-m2sh: 
-	${MAKE} ${MAKEOPTS} -C tools/m2sh all
+#m2sh: 
+#	${MAKE} ${MAKEOPTS} -C tools/m2sh all
 
-procer: 
-	${MAKE} ${MAKEOPTS} -C tools/procer all
+#procer: 
+#	${MAKE} ${MAKEOPTS} -C tools/procer all
 
-test_filters: build/libm2.a
-	${MAKE} ${MAKEOPTS} -C tests/filters all
+#test_filters: build/libm2.a
+#	${MAKE} ${MAKEOPTS} -C tests/filters all
 
-filters: build/libm2.a
-	${MAKE} ${MAKEOPTS} -C tools/filters all
+#filters: build/libm2.a
+#	${MAKE} ${MAKEOPTS} -C tools/filters all
 
-config_modules: build/libm2.a
-	${MAKE} ${MAKEOPTS} -C tools/config_modules all
+#config_modules: build/libm2.a
+#	${MAKE} ${MAKEOPTS} -C tools/config_modules all
 
 install: all
 	install -d $(DESTDIR)/$(PREFIX)/bin/
-	install bin/mongrel2 $(DESTDIR)/$(PREFIX)/bin/
-	${MAKE} ${MAKEOPTS} -C tools/m2sh install
-	${MAKE} ${MAKEOPTS} -C tools/config_modules install
-	${MAKE} ${MAKEOPTS} -C tools/filters install
-	${MAKE} ${MAKEOPTS} -C tools/procer install
+	install bin/monserver $(DESTDIR)/$(PREFIX)/bin/
+#	${MAKE} ${MAKEOPTS} -C tools/m2sh install
+#	${MAKE} ${MAKEOPTS} -C tools/config_modules install
+#	${MAKE} ${MAKEOPTS} -C tools/filters install
+#	${MAKE} ${MAKEOPTS} -C tools/procer install
 
 examples/python/mongrel2/sql/config.sql: src/config/config.sql src/config/mimetypes.sql
 	cat src/config/config.sql src/config/mimetypes.sql > $@

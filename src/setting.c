@@ -36,7 +36,7 @@
 #include <adt/tst.h>
 #include <dbg.h>
 
-static tst_t *SETTINGS_MAP = NULL;
+tst_t *SETTINGS_MAP = NULL;
 
 
 int Setting_add(const char *key, const char *value)

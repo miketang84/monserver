@@ -39,7 +39,6 @@
 #include <string.h>
 #include <signal.h>
 
-#include <sqlite3.h>
 
 #include "adt/tst.h"
 #include "dir.h"
@@ -48,10 +47,16 @@
 #include "proxy.h"
 #include "server.h"
 #include "setting.h"
-#include "config/module.h"
-#include "config/db.h"
-#include "filter.h"
+//#include "config/module.h"
+//#include "config/db.h"
+//#include "filter.h"
 #include <dlfcn.h>
+
+#include <lua.h>
+#include <lauxlib.h>
+
+extern tst_t *MIME_MAP;
+extern tst_t *SETTINGS_MAP;
 
 
 Handler *Config_load_handler(lua_State *L)
@@ -68,7 +73,7 @@ Handler *Config_load_handler(lua_State *L)
 	lua_getfield(L, -4, "recv_ident");
 	bstring recv_ident = bfromcstr(lua_tostring(L, -1));
 	// clean, make the stack top the router item table
-	lua_pop(4);
+	lua_pop(L, 4);
 
     Handler *handler = Handler_create(
             send_spec,
@@ -103,7 +108,7 @@ Proxy *Config_load_proxy(lua_State *L)
 	lua_getfield(L, -2, "port");
 	int port = lua_tointeger(L, -1);
 	// clean, make the stack top the router item table
-	lua_pop(2);
+	lua_pop(L, 2);
 
     Proxy *proxy = Proxy_create(
             addr,
@@ -132,9 +137,9 @@ Dir *Config_load_dir(lua_State *L)
 	lua_getfield(L, -3, "default_ctype");
 	bstring default_ctype = bfromcstr(lua_tostring(L, -1));
 	lua_getfield(L, -4, "cache_ttl");
-	int cache_ttl = lua_tointerger(L, -1);
+	int cache_ttl = lua_tointeger(L, -1);
 	// clean, make the stack top the router item table
-	lua_pop(4);
+	lua_pop(L, 4);
 
     Dir *dir = Dir_create(
     		base,
@@ -185,7 +190,7 @@ static inline Handler *Config_push_unique_handler(Server *srv, Handler *handler)
 
 int Config_load_routes(lua_State *L, Server *srv, Host *host, int host_id, int server_id)
 {
-    int i = 0;
+    int i = 0, rc;
     
     // now, the top of stack is host item table
     lua_getfield(L, -1, "routes");
@@ -201,7 +206,7 @@ int Config_load_routes(lua_State *L, Server *srv, Host *host, int host_id, int s
     	lua_getfield(L, -1, "type");
     	bstring type = bfromcstr(lua_tostring(L, -1));
     	// make the router table at the top
-    	lua_pop(1);
+    	lua_pop(L, 1);
     	
     	void *target = NULL;
         BackendType backend_type = 0;
@@ -287,7 +292,7 @@ error:
 
 int Config_load_hosts(lua_State *L, Server *srv, int server_id)
 {
-    int i;
+    int i, rc;
 
     // now the stack top is hosts table
     lua_getfield(L, -1, "hosts");
@@ -302,11 +307,11 @@ int Config_load_hosts(lua_State *L, Server *srv, int server_id)
         check(lua_isstring(L, -1), "wrong string parameter: host %d's name.\n", i);
         bstring name = bfromcstr(lua_tostring(L, -1));  // name
 
-        lua_getfield(L, -2, "matching")
+        lua_getfield(L, -2, "matching");
         check(lua_isstring(L, -1), "wrong string parameter: host %d's matching.\n", i);
         bstring matching = bfromcstr(lua_tostring(L, -1));  // matching                
         // clean the stack
-        lua_pop(2);
+        lua_pop(L, 2);
         
         Host *host = Host_create(
         		name,
@@ -315,7 +320,7 @@ int Config_load_hosts(lua_State *L, Server *srv, int server_id)
         check_mem(host);
 
         int host_id = i;
-        rc = Config_load_routes(srv, host, host_id, server_id);
+        rc = Config_load_routes(L, srv, host, host_id, server_id);
         check(rc != -1, "Failed to load routes for host %s.", bdata(host->name));
 
         rc = Server_add_host(srv, host);
@@ -326,12 +331,12 @@ int Config_load_hosts(lua_State *L, Server *srv, int server_id)
             srv->default_host = host;
         }
         
-        lua_pop(1);
+        lua_pop(L, 1);
     }
     
     log_info("Loaded %d hosts for server %d:%s", i, server_id, bdata(srv->uuid));
 
-    lua_pop(1);
+    lua_pop(L, 1);
     return 0;
 
 error:
@@ -339,57 +344,17 @@ error:
 
 }
 
-/*
-Server *Config_load_server(const char *uuid)
-{
-    tns_value_t *res = CONFIG_MODULE.load_server(uuid);
-    int rc = 0;
-
-    DB_check(res, 0, 10,
-            tns_tag_number, tns_tag_string, tns_tag_string, tns_tag_string, tns_tag_number,
-            tns_tag_string, tns_tag_string, tns_tag_string, tns_tag_string, tns_tag_number);
-
-    int server_id = DB_get_as(res, 0, 0, number); // id
-
-    Server *srv = Server_create(
-            DB_get_as(res, 0, 1, string), // uuid
-            DB_get_as(res, 0, 2, string), // default_host
-            DB_get_as(res, 0, 3, string), // bind_addr
-            DB_get_as(res, 0, 4, number), // port
-            DB_get_as(res, 0, 5, string), // chroot
-            DB_get_as(res, 0, 6, string), // access_log
-            DB_get_as(res, 0, 7, string), // error_log
-            DB_get_as(res, 0, 8, string), // pid_file
-            DB_get_as(res, 0, 9, number) // use_ssl
-            );
-    check(srv != NULL, "Failed to create server %s", uuid);
-
-
-    rc = Config_load_hosts(srv, server_id);
-    check(rc == 0, "Failed to load the hosts for server: %s", bdata(srv->uuid));
-
-    rc = Config_load_filters(srv, server_id);
-    check(rc == 0, "Failed to load the filters for server: %s", bdata(srv->uuid));
-
-    tns_value_destroy(res);
-    return srv;
-
-error:
-    if(res) tns_value_destroy(res);
-    return NULL;
-}
-*/
 
 Server *Config_load_server(lua_State *L, const char *name)
 {
-    int i;
+    int i, rc;
     int which = 0;
     
     // get the global table settings
     lua_getglobal(L, "servers");
     check(lua_istable(L, -1), "wrong table parameter: servers.\n");
     
-    for (i=1; i<lua_objlen(L, -1); i++) {
+    for (i=1; i<=lua_objlen(L, -1); i++) {
     	// push the servers[i] into the stack
     	lua_rawgeti(L, -1, i);
         check(lua_istable(L, -1), "wrong table parameter: server %d.\n", i);
@@ -397,13 +362,13 @@ Server *Config_load_server(lua_State *L, const char *name)
         check(lua_isstring(L, -1), "wrong string parameter: server %d's name.\n", i);
 		const char *_name = lua_tostring(L, -1);
 		// if the name are equal
-		if (strcmp(_name, name)) {
+		if (!strcmp(_name, name)) {
 			which = i;
-			lua_pop(1);
+			lua_pop(L, 1);
 			break;
 		}
 		
-		lua_pop(2);
+		lua_pop(L, 2);
     }
     
     check(which != 0, "No server find by this name.\n");
@@ -426,7 +391,7 @@ Server *Config_load_server(lua_State *L, const char *name)
     lua_getfield(L, -8, "use_ssl");
 	int use_ssl = lua_tointeger(L, -1);
 	// clean stack, keep the server table at the top
-	lua_pop(8);
+	lua_pop(L, 8);
     
     Server *srv = Server_create(
 			uuid,
@@ -440,47 +405,19 @@ Server *Config_load_server(lua_State *L, const char *name)
 	);
     check(srv != NULL, "Failed to create server %s", uuid);
     
-    rc = Config_load_hosts(srv, which);
+    rc = Config_load_hosts(L, srv, which);
     check(rc == 0, "Failed to load the hosts for server: %s", bdata(srv->uuid));
 
-    rc = Config_load_filters(srv, which);
-    check(rc == 0, "Failed to load the filters for server: %s", bdata(srv->uuid));
+    //rc = Config_load_filters(srv, which);
+    //check(rc == 0, "Failed to load the filters for server: %s", bdata(srv->uuid));
 
     // pop the server[which] from the stack
-    lua_pop(1);
+    lua_pop(L, 1);
     return srv;
 
 error:
     return NULL;
 }
-
-/*
-static int simple_query_run(tns_value_t *res,
-        int (*callback)(const char *key, const char *value))
-{
-    int row_i = 0;
-    int cols = 0;
-    int rows = DB_counts(res, &cols);
-    check(rows != -1, "Results are not a table.");
-
-    if(rows > 0) {
-        for(row_i = 0; row_i < rows; row_i++) {
-            DB_check(res, row_i, 3,
-                    tns_tag_number, tns_tag_string, tns_tag_string);
-
-            bstring key = DB_get_as(res, row_i, 1, string);
-            bstring value = DB_get_as(res, row_i, 2, string);
-
-            int rc = callback(bdata(key), bdata(value));
-            check_debug(rc == 0, "Load callback failed.");
-        }
-    }
-
-    return row_i;
-error:
-    return -1;
-}
-*/
 
 int Config_load_mimetypes(lua_State* L)
 {
@@ -495,7 +432,7 @@ int Config_load_mimetypes(lua_State* L)
     	bstring key_str = bfromcstr(lua_tostring(L, -2));
 		bstring value_str = bfromcstr(lua_tostring(L, -1));
 	    check(!tst_search(MIME_MAP, bdata(key_str), blength(value_str)), 
-            	"Mimetypes key %s already exists, can't add %s:%s", key, key, value);
+            	"Mimetypes key %s already exists, can't add %s:%s", key_str, key_str, value_str);
 
 		// add to global SETTINGS_MAP structure
 		MIME_MAP = tst_insert(MIME_MAP, bdata(key_str), blength(key_str), value_str);
@@ -513,21 +450,6 @@ error: // falthrough
     return -1;
 }
 
-/*
-int Config_load_settings()
-{
-    tns_value_t *res = CONFIG_MODULE.load_settings();
-    int rc = -1;
-    check(tns_get_type(res) == tns_tag_list, "Wrong type, expected valid rows.");
-    rc = simple_query_run(res, Setting_add);
-    check(rc != -1, "Failed adding your settings, look at previous errors for clues.");
-
-error: // falthrough
-    if(res) tns_value_destroy(res);
-    return rc;
-}
-*/
-
 int Config_load_settings(lua_State* L)
 {
     // get the global table settings
@@ -541,7 +463,7 @@ int Config_load_settings(lua_State* L)
     	bstring key_str = bfromcstr(lua_tostring(L, -2));
 		bstring value_str = bfromcstr(lua_tostring(L, -1));
 	    check(!tst_search(SETTINGS_MAP, bdata(key_str), blength(value_str)), 
-            	"Setting key %s already exists, can't add %s:%s", key, key, value);
+            	"Setting key %s already exists, can't add %s:%s", key_str, key_str, value_str);
 
 		// add to global SETTINGS_MAP structure
 		SETTINGS_MAP = tst_insert(SETTINGS_MAP, bdata(key_str), blength(key_str), value_str);
@@ -556,43 +478,6 @@ int Config_load_settings(lua_State* L)
     return 0;
 error: // falthrough
 
-    return -1;
-}
-
-
-int Config_init_db(const char *path)
-{
-    return CONFIG_MODULE.init(path);
-}
-
-void Config_close_db()
-{
-    CONFIG_MODULE.close();
-}
-
-#define SET_MODULE_FUNC(N)    CONFIG_MODULE.N = dlsym(lib, "config_" #N);\
-    check(CONFIG_MODULE.N != NULL, "Config module %s doesn't have an " #N " function.", load_path);
-
-
-int Config_module_load(const char *load_path)
-{
-    void *lib = dlopen(load_path, RTLD_LAZY | RTLD_LOCAL);
-    check(lib != NULL, "Failed to load config module %s: %s.", load_path, dlerror());
-
-    SET_MODULE_FUNC(init);
-    SET_MODULE_FUNC(close);
-    SET_MODULE_FUNC(load_handler);
-    SET_MODULE_FUNC(load_proxy);
-    SET_MODULE_FUNC(load_dir);
-    SET_MODULE_FUNC(load_routes);
-    SET_MODULE_FUNC(load_hosts);
-    SET_MODULE_FUNC(load_server);
-    SET_MODULE_FUNC(load_mimetypes);
-    SET_MODULE_FUNC(load_settings);
-    SET_MODULE_FUNC(load_filters);
-
-    return 0;
-error:
     return -1;
 }
 

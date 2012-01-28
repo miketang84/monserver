@@ -36,17 +36,12 @@
 #define __config_h__
 
 #include "server.h"
+#include <lua.h>
+#include <lauxlib.h>
 
-int Config_init_db(const char *path);
+Server *Config_load_server(lua_State *L, const char *name);
+int Config_load_mimetypes(lua_State *L);
+int Config_load_settings(lua_State *L);
 
-Server *Config_load_server(const char *uuid);
-
-int Config_load_mimetypes();
-
-int Config_load_settings();
-
-void Config_close_db();
-
-int Config_module_load(const char *load_path);
 
 #endif

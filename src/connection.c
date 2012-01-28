@@ -213,7 +213,6 @@ void Connection_fingerprint_from_cert(Connection *conn)
     if (_x509P != NULL && _x509P->raw.len > 0) {
         sha1_context	ctx;
         unsigned char sha1sum[CERT_FINGERPRINT_SIZE + 1] = {0};
-        int i = 0;
 
         sha1_starts(&ctx);
         sha1_update(&ctx, _x509P->raw.p, _x509P->raw.len);

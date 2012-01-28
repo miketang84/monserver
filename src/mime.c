@@ -38,7 +38,7 @@
 #include "setting.h"
 
 
-static tst_t *MIME_MAP = NULL;
+tst_t *MIME_MAP = NULL;
 
 int MAX_EXT_LEN = 0;
 
