@@ -1,0 +1,4 @@
+The Mongrel2 manual has moved to <a href="http://mongrel2.org/static/mongrel2-manual.html">http://mongrel2.org/static/mongrel2-manual.html</a> and you can get a PDF of the whole thing at <a href="http://mongrel2.org/static/mongrel2-manual.pdf">http://mongrel2.org/static/mongrel2-manual.pdf</a>.
+
+We're in the process of reworking the manual so forgive the basic HTML output we're currently using.
+

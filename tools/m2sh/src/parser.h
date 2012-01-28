@@ -1,0 +1,14 @@
+#define TKEOF                             1
+#define TKQSTRING                         2
+#define TKNUMBER                          3
+#define TKIDENT                           4
+#define TKEQ                              5
+#define TKCLASS                           6
+#define TKLPAREN                          7
+#define TKRPAREN                          8
+#define TKCOMMA                           9
+#define TKLBRACE                         10
+#define TKRBRACE                         11
+#define TKLBRACKET                       12
+#define TKRBRACKET                       13
+#define TKCOLON                          14

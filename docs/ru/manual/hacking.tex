@@ -1,0 +1,889 @@
+\chapter{Пишем код}
+
+Эта глава о том, как делать крутые вещи в Mongrel2. Она посвящена всему, что не
+касается развёртывания и управления сервером. Мы погрузимся в детали его работы
+--- рассмотрим как на самом деле браузер взаимодействует с бэкендами; узнаем как
+демо-чат асинхронно передаёт сообщения через сокеты; напишем свои обработчики. Я
+расскажу чем Mongrel2 кардинально отличается от других веб-серверов.  Ну и,
+наконец, поведаю вам о более практических вещах: когда следует использовать
+обработчики, а когда --- воздержаться от них и просто проксировать запросы.
+
+Большинство примеров написаны на Питоне, но их легко адаптировать на другие
+языки, поскольку они достаточно просты. Время от времени я буду демонстрировать
+обработчики на других языках. И вы на практике убедитесь в философии
+\emph{языкового нейтралитета}. Примеры на Питоне отнюдь не означают, что
+аналогичное нельзя написать на своём любимом языке программирования.
+
+На данный момент вы можете писать бэкенды на следующих языках:
+
+\begin{description}
+\item [Питон] Необходимые файлы включены в проект и лежат в \file{examples/python}.
+\item [Руби] Спасибо \href{http://github.com/perplexes/m2r}{perplexes}. Поддерживает Rack.
+\item [C++] Спасибо \href{http://github.com/akrennmair/mongrel2-cpp}{akrennmair}.
+\item [PHP] Спасибо \href{http://github.com/winks/m2php}{winks}.
+\item[Си] Вы, конечно, можете писать обработчики на Си, но это --- жесть; и
+пока не рекомендуется. Библиотека для Си будет позже.
+\item[Другие?] \href{http://zeromq.org}{ZeroMQ} поддерживает следующие языки:
+Ada, Basic, C, C++, Common Lisp, Erlang, Go, Haskell, Java, Lua, .NET,
+Objective-C, ooc, Perl, PHP, Python, и Ruby. Так что после прочтения этой главы
+можете написать библиотеку на своём любимом языке.
+\end{description}
+
+Несмотря на этот достаточно длинный список языков программирования, есть и будут
+приложения, которые не совместимы с 0MQ-обработчиками. Например, уже написанные
+скрипты, которые экономически нецелесообразно переписывать заново. Или же
+скрипты, которые ввиду тех или иных архитектурных особенностей удобней запускать
+как классические веб-приложения. Для поддержки таких скриптов в Mongrel2
+встроено \emph{http-проксирование}. 
+
+\begin{aside}{Как насчёт FastCGI/AJP/CGI/SCGI/WSGI/Rack?}
+Ничто не мешает написать свой коннектор между Mongrel2 и протоколом, который
+поддерживает ваш фреймворк. Если приложение, например, работает посредством
+FastCGI или AJP, нужно написать небольшой обработчик, который бы транслировал
+запросы от Mongrel2 в понятный вашему протоколу формат и наоборот. Сообщения
+Mongrel2 достаточно просто распарсить, поэтому написание такого обработчика не
+должно составить много труда. На данный момент есть поддержка Rack для
+приложений на Руби; для Питона скоро появится поддержка WSGI.
+
+Однако стоит заметить, что Mongrel2 непосредственно не поддерживает ни один из
+перечисленных протоколов. Такая поддержка означала бы привязанность к тому или
+иному языку, что противоречит философии проекта в целом. Вместо этого Mongrel2
+предоставляет возможность для реализации \emph{любого} протокола и поддержки
+\emph{любого} языка.
+\end{aside}
+
+
+\section{Фронтенд}
+
+Mongrel2 поддерживает основные фичи стандартного веб-сервера, такие как выдача
+файлов, перенаправление запросов на другой веб-сервер, обслуживание нескольких
+хостов, кеширование страниц; да и вообще всё, что позволяет нормально общаться
+с браузером. Вы и сами могли это заметить во время конфигурирования. Тем не
+менее, давайте рассмотрим каждый пункт в деталях.
+
+\subsection{HTTP}
+
+Mongrel2 использует парсер из первой версии сервера (Mongrel). Он также
+используется в других веб-серверах, которые обслуживают большие и успешные
+сайты. Этот парсер очень надёжен и точен, и сам его дизайн позволяет
+блокировать множество атак. По большому счёту, для того чтобы использовать
+Mongrel2 об этом можно и не беспокоиться; просто знайте, что для обработки
+HTTP-протокола используется код, которые проверен годами эксплуатации.
+
+Иными словами, если Mongrel2 говорит, что запрос не валидный --- вероятнее всего
+так и есть.
+
+\begin{aside}{Идиоты и реализаторы спецификаций RFC}
+Не знаю почему, но те, кто реализуют стандарты RFC, придерживаются довольно
+странных и порой ложных убеждений, пропагандируемых теми, кто эти стандарты
+создаёт. Что касается HTTP, создатели этого стандарта облажались по двум
+пунктам: возможность принимать абсолютно всё в качестве ввода и конвейерные
+keep-alive запросы.
+
+Если вам нужен надёжный сервер, то тупо принимая \emph{всё}, что посылает
+какой-нибудь идиот, вы подвергаете сервер множеству атак. Если проанализировать
+все атаки на существующие веб-сервера, то окажется, что 80\% используют
+неоднозначности в HTTP-грамматике для передачи вредоносного контента или
+переполнения буферов. Mongrel2 использует парсер, который блокирует некорректные
+запросы на основании базовых принципов, разработанных 30 лет назад и
+подтвержденных математическими выкладками. Он не только фильтрует запросы, но и
+может сказать, \emph{почему} тот или иной запрос невалиден; прям как компилятор.
+Это не значит, что Mongrel2 безжалостен: он просто не терпит неоднозначности и
+тупости.
+
+Mongrel2 полностью поддерживает запросы keep-alive, поскольку он не использует
+Руби и не ограничен 1024 файловыми дескрипторами. В Руби существует ограничение
+на количество открытых файлов в одном процессе, поэтому Mongrel был вынужден
+прерывать keep-alive соединения, чтобы спасти себя от жадных браузеров. В
+Mongrel2 нет этого лимита и соединения не страдают; более того, все они
+управляются абсолютно точным конечным автоматом.
+
+Проблемы также начинаются тогда, когда клиент шлёт запросы конвейером, т.е.
+посылает кучу запросов одновременно и ждёт ответы на все запросы. Это абсолютно
+глупая идея, в которую многие просто не въезжают и, соответственно, либо вовсе
+не поддерживают в реализации, либо поддерживают кое-как. А проблема в том, что
+очень легко пригрузить сервер если отправить тонну запросов; подождать немного
+пока они достигнут прокси-бэкендов; и тут же отключиться. И веб-сервер, и бэкенды
+обречены выполнять бесполезную работу, генерируя ответы, которые по сути уже
+никому не нужны.
+
+Таким образом, Mongrel2 \emph{не поддерживает} конвейерные запросы. Он ожидает
+один запрос и посылает один ответ. Если вам нужно всё и сразу --- идите лесом,
+потому что веб-сервер от этого никоим образом не выигрывает; да и у вас
+сомнительный выигрыш. Это просто ещё один вектор атаки и он сразу же
+блокируется.
+
+Итак, описанные выше два пункта, две дурацкие идеи, не реализованы в Mongrel2.
+Очнитесь! На дворе 2010 год и просто недопустимо писать клиентские приложения
+настолько плохо, чтобы возникла потребность в этих никчёмных фичах.
+\end{aside}
+
+\subsection{Прокси}
+
+Вы уже видели как настроить прокси-маршруты, поэтому имеете представление о том,
+что происходит во время проксирования. Вкратце, вы создаёте маршрут, где в
+качестве бэкенда выступает ещё один веб-сервер. Когда поступает запрос, Mongrel2
+просто перенаправляет его в этот сервер и ждёт ответ.
+
+Mongrel2 поддерживает проксирование на достаточно хорошем, но пока еще
+ограниченном, уровне. Например, нет возможности выбора бэкенда в стиле
+round-robin, нет кэширования страниц и других вещей, полезных в реальных
+сценариях работы веб-сервера. Но все они появятся со временем.
+
+Однако в Mongrel2 прокси-маршрут задаётся так же как и статическая директория
+или обработчик, т.е. соблюдается логичность и однообразие в конфигурационном
+файле. В других веб-серверах всё гораздо сложнее: нужно использовать довольно
+странный синтаксис и кривые if-конструкции, чтобы отделить зёрна от плевел, т.е.
+прокси-маршруты от не-прокси.
+
+Mongrel2 использует одинаковый синтаксис для определения любого маршрута, куда
+бы он ни вёл. Он также должным образом держит соединение с прокси-сервером
+столько сколько нужно.
+
+\begin{aside}{Прокси и 0MQ обработчики подобны mod\_*}
+Заметка для тех у кого есть некоторый опыт работы с другими веб-серверами.
+
+Если вы используете nginx, то, вероятно, знакомы с концепцией проксирования в
+такие ``бэкенды'', как Ruby on Rails и Django. Если есть опыт с Apache, то знаете
+о \ident{mod\_php}, который управляет кодом и автоматически загружает изменения.
+Вы также, скорее всего, знакомы с понятиями ``виртуальный хост'' и
+``mod\_rewrite''.
+
+Все эти концепции пристуствуют и в Mongrel2, тольков более чистом виде. Если
+хотите, чтобы Mongrel2 общался с другим веб-сервером в стиле
+``nginx/mod\_rewrite'', то создавайте прокси-маршрут. Если в роли бэкенда будут
+написанные вами скрипты --- используйте 0MQ-обработчики.
+
+Однако здесь вы не найдёте чего-либо вроде mod\_php, потому что встраивать среду
+выполнения какого-либо конкретного языка программирования означает разрушить
+парадигму языкового нейтралитета.
+\end{aside}
+
+\subsection{Веб-сокеты}
+
+Mongrel2 поддерживает веб-сокеты (WebSockets) пока что на достаточно простом
+уровне --- если кто-то подключается через такой сокет, то запрос будет передан в
+0MQ-обработчик.  Ничего дополнительного пока что с ним не происходит. Да и
+вообще, это низкоприоритетный кусок кода, поскольку сама технология еще в
+развитии. Таким образом, внутри сервера они работают, теоретически, но никто их
+серьёзно не тестировал на практике. И никто ещё не написал специальных
+обработчиков, ориентированных на этот тип соединений.
+
+Попробуйте, и если найдёте ошибки, то сообщите.
+
+\begin{aside}{Веб-сокеты, умрите!}
+Мне всерьёз надоели все эти полуиспечённые закулисные RFC спецификации,
+созданные на основе хреново реализованных продуктов (за которыми стоят гиганты
+индустрии), а не на основе нужд реальных программистов. Веб-сокеты --- яркий
+пример одной из таких спецификаций с кучей странных фич и непонятных перспектив.
+И я очень надеюсь, что однажды она умрёт после недолгой агонии.
+
+Во-первых, эта спецификация предполагает использование \emph{юникода} для
+передачи данных в HTTP-заголовках. Это настолько тупая идея, которая ещё выпьет
+много крови у разработчиков браузеров и серверов, что я просто удивлён, кому
+такое могло прийти в голову. Наверное, какому-нибудь глобалисту, который
+считает, что всё должно быть в юникоде. С юникодом несколько проблем: он не
+добавляет лингвистической ценности--- люди не читают HTTP-заголовки; он
+усложняет разработку серверов; добавляет проблемы безопасности, поскольку он
+неоднозначен; нарушает существующие стандарты, поскольку HTTP предполагает ASCII
+для передачи данных. Как я уже упоминал в этом документе --- разработка
+протоколов и без того сложное дело, чтобы ещё заморачиваться на юникоде.
+
+Во-вторых этот идиотский механизм ``шифрования'' для обмена ключей --- ощущение
+такое, что его придумал прыщавый юнец, а не профессиональный разработчик. Схема
+такая --- берём число, например \verb|1234|, и добавляем в него случайные
+символы, например \verb|1@%^2*(34|. Настолько ``продвинутая'' схема, что можно
+расшифровать за шесть секунд в голове. Я, конечно, дико извиняюсь, но то, что
+придумывают 11-летние дети на бумаге нельзя назвать шифрованием, и уж тем более
+использовать.
+
+Есть и прочие недостатки, но этих двух достаточно, чтобы воздержаться пока от
+серьёзного инвестирования своего времени и усилий в эту технологию. Подождём
+пока.
+\end{aside}
+
+\subsection{JS-сокеты}
+
+Демо-чат использует JS-сокеты (JSSockets) для демонстрации своей магии. А для
+ней нужен Флэш. О, как я ненавижу Флэш! Но он работает, работает сейчас,
+работает всегда и везде, в любом браузере, даже самом отстойном. Поэтому это
+первое, что мы реализовали.
+
+\subsection{Long Poll}
+
+В Mongrel2 всё --- long poll; и обычные запросы/ответы это супербыстрые long
+poll сессии. По большому счёту, даже нет необходимости об этом знать. Сервер
+получает запросы от клиента, которого можно в любой момент идентифицировать, и
+отсылает данные назад. Вот и всё. И не важно, посылает ли сервер одиночный
+ответ, потоковые данные, или в режиме long poll --- всё одно --- для вас это
+прозрачно.
+
+\subsection{Потоковые данные}
+
+Асинхронность и возможность посылать из обработчиков даже незаконченные
+сообщения любому количеству адресатов делает Mongrel2 полезным для работы с
+потоковыми данными (аудио, видео и т.п.). Кроме того, ZeroMQ --- невероятно
+эффективный транспортный механизм, с помощью которого можно пересылать горы
+информации множеству подключённых браузеров и других клиентов. Всё это в
+совокупности превращает передачу музыки и фильмов в тривиальную задачу. Мы
+рассмотрим пример mp3stream, в котором реализован потоковый протокол ICY. 
+
+\subsection{Ответы N:M}
+
+Эффективность передачи потоковых данных, асинхронных сообщений и запросов long
+poll заключается в том, что \emph{одно} сообщение может быть адресовано вплоть
+до 128 клиентам. Т.е. один ответ может быть отправлен сразу нескольким браузерам
+и для этого не надо лишний раз копировать данные.
+
+В дополнение к этому, с помощью 0MQ можно так настроить Mongrel2, что один зпрос
+от браузера будет перенаправлен нескольким обработчикам. Вы даже можете
+отправлять запросы целому кластеру из серверов по UDP протоколу, а для
+надёжности воспользоваться \href{http://code.google.com/p/openpgm}{OpenPGM}.
+
+Пока что Mongrel2 --- единственный браузер который может делать такой трюк:
+отправлять запрос сразу N бэкендам, ждать ответа, и отправлять назад в M
+браузеров. Не знаю, какому типу приложений может это понадобиться, но, возможно,
+это что-то очень крутое.
+
+\subsection{Загрузка файлов}
+
+Иногда при загрузке файлов они настолько большие, что парализуют сервер, потому
+что он не может прекратить процесс. Mongrel2 решает эту проблему. Он отправляет
+большие запросы во временные файлы, но перед этим уведомляет обработчик о начале
+загрузки. Когда загрузка завершена, обработчик также получает уведомление. Если
+по какой-то причине нужно остановить загрузку, вы просто посылаете пустое
+сообщение (из обработчика) и весь процесс отменяется.
+
+\section{Введение в ZeroMQ}
+
+Мы подошли, наверное, к самой главной части этого мануала ---
+\href{http://zeromq.org}{ZeroMQ}. В задачи этого документа не входит обучение
+всем тонкостям этой библиотеки, тем не менее, я расскажу основные принципы,
+чтобы понять, с чем мы имеем дело.
+
+Вкратце, ZeroMQ --- это библиотека, которая реализует сокеты так, как они должны
+работать с точки зрения программиста. Программисты же, когда слышат о TCP или
+UDP сокетах, наивно полагают, что они работают следующим образом:
+
+\begin{description}
+\item [TCP] Разработчики думают, что это последовательные сообщения и если они
+    посылают такое ``сообщение'' размером, например 10кб, то когда принимающая
+    сторона получает его, то все 10кб считываются с сокета. Такая схема, на самом
+    деле, работает только с маленькими сообщениями и не в глобальной сети.
+    Реальность же такова, что вы можете получить сообщение любого размера и без
+    какого-либо маркера, который бы показывал, где кончается одно сообщение и
+    начинается другое. Т.е. TCP --- это \emph{потоковый} протокол.
+
+\item [UDP] Разработчики думают, что UDP сокеты это одиночные, быстрые,
+    \emph{надёжные} сообщения, которые могут переданы одному и более клиентам. По
+    крайней мере, они знают, что в UDP размер сообщения фиксированный, но они иногда
+    не понимают, что это очень ненадёжный протокол.
+\end{description}
+
+ZeroMQ предоставляет API, который очень похож на сокеты, но сильно превосходит
+их по удобству использования. С помощью вызова
+\href{http://api.zeromq.org/zmq\_socket.html}{zmq\_socket} можно задать тип
+соединения: среди них есть запрос/ответ, мультикаст, и другие. Вот полный
+список:
+
+\begin{description}
+  \item [\texttt{ZMQ\_REQ}/\texttt{ZMQ\_REP}] Классический сокет запрос/ответ (REQ/REP).
+    По семантике очень похож на протокол HTTP, но только с более жёсткими
+    рамками. И несколько медленнее, чем другие типы подключений.
+
+  \item [\texttt{ZMQ\_PUB}/\texttt{ZMQ\_SUB}] Соединение типа
+    издатель/подписчик (PUB/SUB) для отправки асинхронных децентрализованных сообщений.
+    Издатель отправляет сообщение нескольким подписчикам и не ждёт в ответ ничего.
+    Подписчики же просто получают адресованные им сообщения; они также могут
+    подписаться на сообщения только с заданным префиксом (своего рода фильтр).
+
+  \item [\texttt{ZMQ\_PUSH}/\texttt{ZMQ\_PULL}] Сокеты PUSH/PULL --- что-то
+    вроде асинхронных сокетов, которые передают сообщения в стиле round-robin.
+    Они работают подобно PUB/SUB, но сообщение идёт только одному подписчику в
+    кластере.
+
+  \item [\texttt{ZMQ\_PAIR}] Пара --- это прямое соединение между двумя
+    адресатами, т.е. обычное TCP-соединение, только с некоторыми плюшками.
+
+\end{description}
+
+Далее, ZeroMQ отделяет типы сообщений от транспортных протоколов и предоставляет
+простой синтаксис для задания протокола: например \shell{tcp://127.0.0.1:9999}.
+Ниже перечислены все протоколы, которые нужно указать во время вызова
+\href{http://api.zeromq.org/zmq\_bind.html}{zmq\_bind} и
+\href{http://api.zeromq.org/zmq\_connect.html}{zmq\_connect}:
+
+\begin{description}
+\item [\texttt{tcp://}] Старый добрый TCP сокет с хостом и портом.
+\item [\texttt{ipc://}] Межпроцессное взаимодействие с помощью Unix-сокетов.
+\item [\texttt{pgm://}] Надёжный мультикастовый протокол на основе IP; требует
+специальных прав.
+\item [\texttt{epgm://}] ``Инкапсулированная'' версия предыдущего протокола;
+использует UDP для надёжной передачи сообщений.
+\end{description}
+
+Ну и наконец, для ZeroMQ не так уж важно, кто слушает порт, а кто к нему
+подключается (bind vs. connect). Важен тип сообщений и в каком направлении они
+передаются, т.е. важна семантика. В Mongrel2, например, сервер слушает порт, а
+обработчики по необходимости подключаются к нему. В результате получаются
+бэкенды с ``нулевой конфигурацией''. Для веб-сервера и нет необходимости знать
+об обработчиках; важно, чтобы они знали о сервере.
+
+Последний пункт: ZeroMQ гораздо толерантнее к неожиданным отключениям. При
+использовании обычных сокетов, если клиент прерывает связь в процессе передачи
+сообщения, то сообщение теряется и возникает ошибка. В ZeroMQ клиенты,
+подключенные к сокету, не генерируют какие-либо события; таким образом,
+отключение ведёт лишь к тому, что сообщение либо помещается в очередь, либо
+просто игнорируется. Вот почему не так уж важно, кто и с какой стороны
+подключается: это только механизм адресации, а \emph{не механизм управления
+состояниями}.
+
+По другому эту фичу можно описать так: в ZeroMQ нет вызова \emph{accept},
+клиенты подключаются и отключаются, а сервер считывает сообщения по мере
+поступления или отсылает их при необходимости.
+
+\subsection{A Quick Python ZeroMQ Example}
+
+I've written a simple abstraction over ZeroMQ that fits the Mongrel2 usage of it, but
+I think learning how you'd write your own ZeroMQ simple echo server in Python will
+help you get a handle on it.  First the client then the server:
+
+\begin{code}{Simple Python ZeroMQ Client}
+\begin{lstlisting}
+import zmq
+
+ctx = zmq.Context()
+s = ctx.socket(zmq.SUB)
+s.connect("tcp://127.0.0.1:5566")
+s.setsockopt(zmq.SUBSCRIBE, '')
+
+msg = s.recv()
+print "MSG: ", repr(msg)
+\end{lstlisting}
+\end{code}
+
+
+\begin{code}{Simple Python ZeroMQ Server}
+\begin{lstlisting}
+import zmq
+import time
+
+ctx = zmq.Context()
+s = ctx.socket(zmq.PUB)
+s.bind("tcp://127.0.0.1:5566")
+
+while True:
+    s.send("HELLO")
+    time.sleep(1)
+\end{lstlisting}
+\end{code}
+
+
+You can then run these two in different windows and they will talk to each
+other.  Try playing around with different socket types and transports to see
+what they do.  Notice that for a PUB/SUB setup we have to use \ident{setsockopt}
+to subscribe the nothing (\verb|''|).  This is the same no matter what language you
+use.
+
+Here's an example that does the same thing but with REQ/REP style of messages.
+
+\begin{code}{ZeroMQ REQ/REP Client}
+\begin{lstlisting}
+import zmq
+
+ctx = zmq.Context()
+s = ctx.socket(zmq.REQ)
+s.connect("tcp://127.0.0.1:5566")
+
+s.send('HI FROM CLIENT')
+
+msg = s.recv()
+print "MSG: ", repr(msg)
+\end{lstlisting}
+\end{code}
+
+
+\begin{code}{ZeroMQ REQ/REP Server}
+\begin{lstlisting}
+import zmq
+
+ctx = zmq.Context()
+s = ctx.socket(zmq.REP)
+s.bind("tcp://127.0.0.1:5566")
+
+while True:
+    print "GOT BACK", repr(s.recv())
+    s.send("HELLO")
+\end{lstlisting}
+\end{code}
+
+As you can see when you run this, it's more like your classic web server style of messaging,
+where a client requests something with an initial message, and the server replies.  Try getting
+the order wrong and see how ZeroMQ aborts and tells you it's wrong.  REQ sockets \emph{must} send
+first then recv, and REP sockets \emph{must} recv then send.
+
+\begin{aside}{There's Always a Size in ZeroMQ Land}
+The lack of a reliable framing mechanism in TCP was a crime against humanity.  What I mean by a
+``frame'' is a simple indicator that a message in a stream has a certain length.  If you preface
+each message in TCP with the length of the data you're about to send then you avoid all manner
+of annoyance, attacks, and bugs.  Something as simple as a single byte that says you're sending up
+to 128 more bytes, with an extra bit to indicate the last byte would have saved the world much
+pain.
+
+This is basically what ZeroMQ has done, and so much more.  ZeroMQ pulls out all the tricks to make
+sure that the message you receive is totally cooked, fully sized, and transports it faster than
+TCP can actually send it.  It does this by framing things intelligently, using compression, reducing
+copying, and just generally being awesome.
+
+Of course, the only limitation is that it can't really \emph{stream} things. But then again, nobody
+really does true streaming.  They always end up having to bolt on some framing of some kind.
+\end{aside}
+
+
+\section{Handler ZeroMQ Format}
+
+You've had the world's fastest crash course in \href{http://zeromq.org}{ZeroMQ} and now you're
+ready to see how Mongrel2 talks to your handlers with it.  I won't really call this a ``protocol'',
+since ZeroMQ is really doing the protocol, and we just pull fully baked messages out of it.  Instead,
+this is just a format, as if you got strings out of a file or something similar.  This message
+format is designed to accomplish a few things in the simplest way possible:
+
+\begin{enumerate}
+\item Be usable from languages that are statically compiled or scripting languages.
+\item Be safe from buffer overflows if done right, or easy to do right.
+\item Be easy to understand and require very little code.
+\item Be language agnostic and use a data format everyone can accept without complaining
+    that it should be done with their favorite\footnote{Except Erlang guys, 'cause they'll always
+    complain that everything's not in Erlang}.
+\item Be easy to parse and generate inside Mongrel2 \emph{without} have to parse the entire message
+    to do routing or analysis.
+\item Be useful within ZeroMQ so that you can do subscriptions and routing.
+\end{enumerate}
+
+To satisfy these features we use haveo types of ZeroMQ sockets (soon to be configurable),
+a request format that Mongrel2 sends and a response format that the handlers send back.  Most
+importantly, there is \emph{nothing about the request and response that must be connected}.  In most
+cases they will be connected, but you can receive a request from one browser and send a response
+to a totally different one.
+
+\subsection{Socket Types Used}
+
+First, the types of ZeroMQ sockets used are a \ident{ZMQ\_PUSH} socket
+for messages from Mongrel2 to Handlers, which means your Handler's receive
+socket should be a \ident{ZMQ\_PULL}.  Mongrel2 then uses a
+\ident{ZMQ\_SUB} socket for receiving responses, which means your Handlers
+should send on a \ident{ZMQ\_PUB} socket.  This setup
+allows multiple handlers to connect to a Mongrel2 server, but only
+one Handler will get a message in a round-robin style.  The PUB/SUB reply
+sockets, though, will let Handlers send back replies to a cluster of
+Mongrel2 servers, but only the one with the right subscription will
+process the request.\footnote{The types of sockets used will be configurable
+in later version}
+
+In the various APIs we've implemented, you don't need to care about this.
+They provide an abstraction on top of this, but it does help to know it
+so that you understand why the message format is the way it is.
+
+This leads to rule number 1:
+
+\begin{quote}
+\emph{Rule 1:} Handlers receive on with PULL and send with PUB sockets.
+\end{quote}
+
+\subsection{UUID Addressing}
+
+Do you remember all those UUIDs all over the place in the configuration files?
+They may have seemed odd, but they identify specific server deployments and
+processes in a cluster.  This will let you identify exactly which member of a
+cluster sent a message, so that you can return the right reply.  This is the
+first part of our protocol format and it results in the next rule 2:
+
+\begin{quote}
+\emph{Rule 2:} Every message to and from Mongrel2 has that Mongrel2 instance's
+UUID as the very first thing.
+\end{quote}
+
+\subsection{Numbers Identify Listeners}
+
+You then need a way to identify a particular listener (browser, client, etc.)
+that your message should target, \emph{and} Mongrel2 needs to tell you who is
+sending your handler the request.  This means Mongrel2 sends you is just one
+identifier, but you can send Mongrel2 a list of them.  This leads to rule 3:
+
+\begin{quote}
+\emph{Rule 3:} Mongrel2 sends requests with one number right after the server's
+UUID separated by a space.  Handlers return a \emph{netstring} with a list of
+numbers separated by spaces.  The numbers indicate the connected browser the
+message is to/from.
+\end{quote}
+
+In case you don't know what a netstring is, it is a very simple way to encode a
+block of data such that any language can read the block and know how big it is.
+A netstring is, simply, \verb|SIZE:DATA,|. So, to send ``HI'', you would do
+\verb|2:HI,|, and it is \emph{incredibly} easy to parse in every language, even
+C.  It is also a fast format and you can read it even if you're a human.
+
+
+\subsection{Paths Identify Targets}
+
+In order to make it possible to route or analyze a request in your handlers
+without having to parse a full request, every request has the path that
+was matched in the server as the next piece.  That gives us:
+
+\begin{quote}
+\emph{Rule 4:} Requests have the path as a single string followed by a
+    space and \emph{no paths may have spaces in them}.
+\end{quote}
+
+
+\subsection{Request Headers And Body}
+
+We only have two more rules to complete the message format.
+
+\begin{quote}
+\emph{Rule 5:} Mongrel2 sends requests with a \ident{netstring} that contains a
+JSON hash (dict) of the request headers, and then another \ident{netstring}
+with the body of the request.
+\end{quote}
+
+Then there's a similar rule for responses:
+
+\begin{quote}
+\emph{Rule 6:} Handlers return just the body after a space character.  It can be \emph{any}
+    data that Mongel2 is supposed to send to the listeners.
+\end{quote}
+
+HTTP headers, image data, HTML pages, streaming video\ldots You can also send as
+many as you like to complete the request and any handler can send it.
+
+
+\subsection{Complete Message Examples}
+
+Now, even though we laid out all of this as a series of rules, the actual code to implement
+these is very simple.  First here's a simple ``grammar'' for how a request that
+gets sent to your handlers is formatted:
+
+\begin{lstlisting}
+UUID ID PATH SIZE:HEADERS,SIZE:BODY,
+\end{lstlisting}
+
+That's obviously a much simpler way to specify the request than all those
+rules, but it also doesn't tell you why.  The above description, while
+boring as hell, tells you why each of these pieces exist.
+
+To parse this in Python we simply do this:
+
+\begin{code}{Parsing Mongrel2 Requests In Python}
+\begin{lstlisting}
+import json
+
+def parse_netstring(ns):
+    len, rest = ns.split(':', 1)
+    len = int(len)
+    assert rest[len] == ',', "Netstring did not end in ','"
+    return rest[:len], rest[len+1:]
+
+def parse(msg):
+    sender, conn_id, path, rest = msg.split(' ', 3)
+    headers, rest = parse_netstring(rest)
+    body, _ = parse_netstring(rest)
+
+    headers = json.loads(headers)
+
+    return uuid, id, path, headers, body
+\end{lstlisting}
+\end{code}
+
+This is actually all of the code needed to parse a request, and is
+fairly the same in many other languages.  If you look at the file
+\file{examples/python/mongrel2/request.py}, you'll see a more complete
+example of making a full request object.
+
+A response is then just as simple and involves crafting a similar
+setup like this:
+
+\begin{lstlisting}
+UUID SIZE:ID ID ID, BODY
+\end{lstlisting}
+
+Notice I've got three IDs here, but you can do anywhere from 1 up to 128.  Generating
+this is very easy in Python:
+
+\begin{code}{Generating Responses}
+\begin{lstlisting}
+
+def send(uuid, conn_id, msg):
+    header = "%s %d:%s," % (uuid, len(str(conn_id)), str(conn_id))
+    self.resp.send(header + ' ' + msg)
+
+
+def deliver(uuid, idents, data):
+    self.send(uuid, ' '.join(idents), data)
+
+\end{lstlisting}
+\end{code}
+
+That, again, is all there is to it.  The \ident{send} method is the
+one doing the real work of crafting the response, and the \ident{deliver}
+method is just using \ident{send} to do all the the target idents
+joined with a space.
+
+
+\subsection{Python Handler API}
+
+Instead of building all of this yourself, I've created a Python library
+that wraps all this up and makes it easy to use.  Each of the other
+libraries are designed around the same idea and should have a similar
+design.  To check out how to use the Python API, we'll take a look at
+each of the demos that are available.  These are the same demos you
+ran in the previous section to create a sample deployment.
+
+For the Python API, you may want to start by looking at two very small files that should be able to understand quickly:
+\file{examples/python/mongrel2/request.py} and
+\file{examples/python/mongrel2/handler.py}.
+
+
+\section{Basic Handler Demo}
+
+The most basic handler you can write is in the \file{examples/http\_0mq/http.py} file
+and it just the simplest thing possible:\footnote{This is the same code as the original
+file, but with extraneous prints removed for simplicity.}
+
+\begin{code}{http.py example}
+  \lstinputlisting[language=Python]{../../examples/http_0mq/http.py}
+\end{code}
+
+All this code does is print back a simple little dump of what it received, and
+it's not even a valid HTML document.  Let's walk through everything that's going on:
+
+\begin{enumerate}
+\item Import the \ident{handler} module from \ident{mongrel2} and \ident{json}.  The \ident{json} module is
+    really only used for logging.
+\item Establish the UUID for our handler, and create a connection.  It's not \emph{really} a connection
+    but more of a ``virtual circuit'' that you can just pretend is a connection.  It's using all ZeroMQ and
+    the protocol we just described to create a simple API to use.
+\item Go into a while loop forever and recv request objects off the connection.
+\item One type of special message we can get from Mongrel2 is a ``disconnect'' message, which tells you that
+    one of the listeners you tried to talk to was closed.  You should either ignore those and read
+    another, or update any internal state you may have.  They can come asynchronously, and for the most
+    part you can ignore them unless you need to keep them open as in, say, a chat application or streaming.
+\item Craft the reply you're going to send back, which is just a dump of what you received.
+\item Send this reply back to Mongrel2.  Notice the subtle difference where you include the \emph{req} object
+    as part of how you reply?  This is the major difference between this API and more traditional
+    request/response APIs in that you need the request you are responding to so that it knows where to send
+    things.  In a normal socket-based server this is just assumed to be the socket you're talking about.
+\end{enumerate}
+
+This is all you need at first to do simple HTTP handlers.  In reality, the \ident{reply\_http} method is
+just syntactic sugar on crafting a decent HTTP response.  Here's the actual method that is crafting these replies:
+
+\begin{code}{HTTP Response Python Code}
+\begin{lstlisting}
+def http_response(body, code, status, headers):
+    payload = {'code': code, 'status': status, 'body': body}
+    headers['Content-Length'] = len(body)
+    payload['headers'] = "\r\n".join('%s: %s' % (k,v) for k,v in
+                                     headers.items())
+
+    return HTTP_FORMAT % payload
+
+\end{lstlisting}
+\end{code}
+
+Which is then used by \ident{Connection.reply\_http} and
+\ident{Connection.deliver\_http} to send an actual HTTP response.  That
+means all this is doing is creating the raw bytes you want to go
+to the real browser, and how it's delivered is irrelevant.  For example,
+the \ident{deliver\_http} method means that, yes, you can have one
+handler send a single response to target \emph{multiple} browsers
+at once.
+
+
+\section{Async File Upload Demo}
+\label{sec:async_file_upload_demo}
+
+Mongrel2 uses an asynchronous method of doing uploads that helps you 
+avoid receiving files you either can't accept or shouldn't accept.  It does
+this by sending your handler an initial message with just the headers, streaming
+the file to disk, and then a final message so you can read the resulting file.
+If you don't want the upload, then you can send a kill message (a 0 length message)
+and the connection closes, and the file never lands.
+
+The upload mechanism works entirely on content length, and whether the file
+is larger than the \ident{limits.content\_length}.  This means if you don't
+want to deal with this for most form uploads, then just set \ident{limits.content\_length}
+high enough and you won't have to.
+
+However, if you want to handle file uploads or large requests, then you add
+the setting \ident{upload.temp\_store} to a \ident{mkstemp} compatible path
+like \file{/tmp/mongrel2.upload.XXXXXX} with the XXXXXX chars being replaced
+with random characters.  It doesn't have to /tmp either, and can be any store
+you want, network disk, anything.
+
+Here's an example handler in \file{examples/http\_0mq/upload.py} that shows
+you how to do it:
+
+\begin{code}{Async Upload Example}
+\lstinputlisting[language=Python]{../../examples/http_0mq/upload.py}
+\end{code}
+
+You can test this with something like
+\verb|curl -T tests/config.sqlite http://localhost:6767/handlertest| to upload a big file.
+
+What's happening is the following process:
+
+\begin{enumerate}
+\item Mongrel2 receives a request from a browser (or curl in this case) that is greater than \ident{limits.content\_length} in size.  It actually doesn't read all of it yet, only about 2k.
+\item Mongrel2 looks up the \ident{upload.temp\_store} setting and makes a temp file there to write the contents.  If you don't have this setting then it aborts and returns an error to the browser.
+\item Mongrel2 sees that the request is for a Handler, so it crafts an initial request message.  This request message has all the original headers, plus a \ident{X-Mongrel2-Upload-Start} header with the path of the expected tmpfile you will read later.
+\item Your handler receives this message, which has no actual content, but the original content length, all the headers, and this new header to indicate an upload is starting.
+\item At this point, your handler can decide to kill the connection by simply responding with a kill message, or even with a valid HTTP error reponse then a kill message.
+\item Otherwise your handler does nothing, and Mongrel2 is already streaming the file into the designated tmpfile for this upload.
+\item When the upload is finally saved to the file, it \emph{adds} a new header of \ident{X-Mongrel2-Upload-Done} set to the same file as the first header.  Remember that \emph{both} headers are in this final request.
+\item Your handler then gets this final request message that has both the \ident{X-Mongrel2-Upload-Start} and \ident{X-Mongrel2-Upload-Done} headers, which you can then use to read the upload contents.  You should also make sure the headers match to prevent someone forging completed uploads.
+\end{enumerate}
+
+\begin{aside}{Watch The chroot Too}
+Remember, when you run Mongrel2 it will store the file relative to its \ident{chroot} setting.  In testing you probably aren't
+running Mongrel2 as root so it works fine.  You just then have to make sure that your handler know to look for the file in the
+same place.  So if you have \file{/var/www/mongrel2.org} for your \ident{chroot} and \file{/uploads/file.XXXXXX} then the
+actual file will be in \file{/var/www/mongrel2.org/uploads/file.XXXXXX}.  The good thing is you can read the config database
+in your handlers and find out all this information as well.
+\end{aside}
+
+\section{MP3 Streaming Demo}
+
+The next example is a very simple and, well, kind of poorly implemented
+MP3 streaming demo that uses the ICY protocol.  ICY is a really lame
+protocol that was obviously designed before HTTP was totally baked
+and probably by people who don't really get HTTP.  It works in an odd
+way of having meta-data sent at specific sized intervals so the
+client can display an update to the meta-data.
+
+The mp3streamer demo creates a streaming system by
+having a thread that receives requests for connections, and then
+another thread that sends the current data to all currently connected
+clients.  Rather than go through all the code, you can take a look
+at the main file and see how simple it is once you get the
+streaming thread right:
+
+\begin{code}{Base mp3stream Code}
+  \lstinputlisting[language=Python]{../../examples/mp3stream/handler.py}
+\end{code}
+
+Walking through this example is fairly easy, assuming you just trust
+that the streaming thread stuff works:
+
+\begin{enumerate}
+\item Starts off just like the handler test.
+\item We figure out what .mp3 files are in the current directory.
+\item Establish a data chunk size of 5k for the ICY protocol and
+    make a ConnectState and Streamer from that.  These are the
+    streaming thread things found in \file{mp3stream.py} in the same
+    directory.
+\item We then loop forever, accepting requests.
+\item Unlike the handler, we want to remove disconnected clients,
+    so we take them out of the STATE when we are notified.
+\item If we have too many connected clients, we reply with a failure.
+\item Otherwise, we add them to the STATE and then send the initial
+    ICY protocol header to get things going.
+\end{enumerate}
+
+
+That is the base of it, and if you point mplayer at it (which is
+the only player that works, really) you should hear it play:
+
+\begin{lstlisting}
+> mplayer http://localhost:6767/mp3stream
+\end{lstlisting}
+
+That is, assuming you put some mp3 files into the directory and
+started the handler again.
+
+For more on how the actual state and the protocol works, go look
+at mp3stream.py.  Explaining it is far outside the scope of this manual,
+but the key points to realize are that this is one thread that's
+targetting randomly connected clients with a single message to the
+Mongrel2 server and streaming it.
+
+
+\section{Chat Demo}
+
+The chat demo is the most involved demonstration, and I'm kind of getting
+tired of leading you by the hand, so you go read the code.  Here's where
+to look:
+
+\begin{description}
+\item [JavaScript] Look at \file{examples/chat/static/*.js} for the goodies.
+    The key is to see how \file{chat.js} works with the JSSocket stuff,
+    and then look at how I did \file{app.js} using \file{fsm.js}.
+\item [Python] Look at the \file{examples/chat/chat.py} file to see how
+    the chat states are maintained and how messages are sent around.
+\item [config] The configuration you created in the last chapter
+    actually works with the demo, and if you've been following along
+    you should have tested it.
+\end{description}
+
+Hopefully, you can figure it out from the code, but if not, let me know.
+
+
+\section{Other Language APIs}
+
+As mentioned before, there are currently APIs for Ruby, C++, and PHP in
+addition to the Python code:
+
+
+\begin{description}
+\item [Python] When you installed the \shell{m2sh} gear, you also got a \ident{mongrel2} Python library.
+\item [Ruby] Probably the most extensively supported language, with good Rack support, by \href{http://github.com/perplexes/m2r}{perplexes on github}.
+\item [C++] C++ support by \href{http://github.com/akrennmair/mongrel2-cpp}{akrennmair on github}.
+\item [PHP] PHP support by \href{http://github.com/winks/m2php}{winks on github}.
+\end{description}
+
+
+If you want to implement another language, it should be fairly trivial.
+Just base your design on the Python API so that it is consistent, but, please,
+don't be a slave to the Python design if it doesn't fit the chosen language;
+creating a direct translation of the Python is fine at first, but try
+to make it idiomatic after that so people who use that language feel at
+home and it's easy for them.
+
+
+\section{Writing Your Own m2sh}
+
+The very last thing I will cover in the section on hacking Mongrel2 is how to
+write your own \shell{m2sh} script in your favorite language.  Obviously, if
+you're doing this you should probably have a good reason\footnote{Like if
+you're a Ruby weenie and Python is banned at your company because they like
+dogma more than money.}.  What writing your own, or understanding what
+\shell{m2sh} is doing will do for you, though, is help you when you start to
+think about automating Mongrel2 for your deployments.
+
+Hopefully, I may have motivated you to automate, automate, automate.
+This is why we write software.  If I wanted to do stuff manually I'd
+go play guitars or juggle.  I write software because I want a computer
+to do things for me, and nothing needs this more than managing your systems.
+
+This is why Mongrel2 is designed the way it is, using the MVC model.  It
+lets \emph{you} create your own View like m2sh, web interfaces, automation
+scripts, and anything else you need to make it easier to manage more.
+
+If you want to write your own \shell{m2sh} then first go have a look at
+the Python code in \file{examples/python/config}.  This is where each
+command lives, where the argument parsing is and, most importantly, the
+ORM model that works the raw SQLite database.
+
+The next thing to do is to make your tool craft databases and compare the
+results to what m2sh does for a similar configuration.  I recommend you make
+a database that's ``correct'' with m2sh, and then dump it via \shell{sqlite3}.
+After that, use your tool to make your own database, dump it, and then use
+\shell{diff} to compare your results to mine.
+
+Finally, you'll need to look at two base schema files:
+\file{src/config/config.sql} and \file{src/config/mimetypes.sql}, where
+the database schema is created and the large list of mimetypes that
+Mongrel2 knows is stored.\footnote{Incidentally, if you want to add one,
+that's the table to put it in.}  Your tool should be able to use this
+SQL to make its database, or at least know what it does.
+
+If you do something cool with all of this, let us know.

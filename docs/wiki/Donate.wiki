@@ -1,0 +1,39 @@
+<h1>Donating To Mongrel2</h1>
+
+<p>The Mongrel2 Project is volunteer run and mostly written by me, <a
+href="http://zedshaw.com">Zed A. Shaw</a>.  If you believe in the project's
+goal of a truly programming language agnostic practical bad ass web server,
+then please donate.  You can also see a list of <a
+href="/wiki?name=Donors">Donors</a> so far.  Donations
+go to me as a way to fund my work on Mongrel2.</p>
+
+<h2>Donate With Paypal</h2>
+
+<p><a href="http://paypal.com">Paypal</a> is the preferred way to donate and works for anyone no matter where they are from.</p>
+
+<h2>Advertising Sponsor</h2>
+
+<p>If you want a more prominent display then I'll be putting a small number of
+small logos representing companies who agree to sponsor Mongrel2.  If you're
+interested in sponsoring Mongrel2 then contact <a href="mailto:zedshaw@zedshaw.com">zedshaw@zedshaw.com</a> and let me know what
+you'd like to give and who you are.</p>
+
+<p>Keep in mind though that I don't do backroom deals, so even if you donate I will still try to keep the project focused on what
+people are doing with it and what fits my vision for the project.  Donating money gets you focus on your company, not say in my project.
+</p>
+
+<h2>Other Ways To Help</h2>
+
+<p>If you can't donate money but still want to help then there's plenty of things you can do to help the project:</p>
+
+<ul>
+<li>Try running actual projects on Mongrel2 and report bugs in the <a href="/tktnew">Tickets</a> section so we can fix them.</li>
+<li>Writing a blog post about Mongrel2, good or bad, helps, but make sure we know about it so we can read it.</li>
+<li>Offering to write documentation for your particular operating system flavor.</li>
+<li>Fixing things and sending in patches.</li>
+<li>Creating handler implementations in other languages, the more the better.</li>
+<li>Writing new configuration interfaces to compliment the existing Python based m2sh.</li>
+<li>Thinking up crazy features so we can maybe implement them, and probably tell you to do it as a handler.</li>
+<li>If you're in SF and are using Mongrel2 then I (Zed) will gladly come check out what you are doing.  It's like free consulting!</li>
+</ul>
+

@@ -1,0 +1,79 @@
+<h1>Débuter avec Mongrel2</h1>
+
+<p>Voici la manière la plus rapide pour débuter avec Mongrel2. Rien n'est vraiment expliqué, tout dont vous avez besoin est pré-configuré et vous n'avez qu'à lancer quelques commandes. Si vous voulez de plus amples explications, lisez <a href="/doc/tip/docs/manual/book.wiki">le manuel complet</a> qui couvre tout, de comment commencer à comment écrire vos premiers handlers.</p>
+
+<p>Ce document suppose que vous savez ce que vous faites et que vous êtes en mesure de lancer des commandes sur un système Unix.</p>
+
+<h1>Installer les dépendances</h1>
+
+<p>Voilà comment je ferais sur Arch Linux :</p>
+
+<pre>
+# installer ZeroMQ 
+wget http://www.zeromq.org/local--files/area:download/zeromq-2.1.4.tar.gz 
+tar -xzvf zeromq-2.1.4.tar.gz 
+cd zeromq-2.1.4/ 
+./configure 
+make 
+sudo make install 
+
+<p># installer sqlite3 
+sudo pacman -S sqlite3
+</p></pre>
+
+<h1>Récupérer les sources</h1>
+
+<p>Le plus rapide est de récupérer l'archive tar.bz2 :</p>
+
+<pre>
+wget http://mongrel2.org/static/downloads/mongrel2-1.6.tar.bz2
+</pre>
+
+<h1>Installer Mongrel2</h1>
+
+<p>Vous allez maintenant installer Mongrel2 :</p>
+
+<pre>
+tar -xjvf mongrel2-1.6.tar.bz2
+cd mongrel2-1.6
+make clean all install
+</pre>
+
+<p>Le numéro de version de votre répertoire peut être différent, étant donné que nous faisons des mises à jour assez souvent.</p>
+
+<h1>La première configuration</h1>
+
+<p>Vous pouvez maintenant tester la configuration la plus simple et lancer mongrel2 :</p>
+
+<pre>
+cp examples/configs/sample.conf mysite.conf
+m2sh load -config mysite.conf
+ls config.sqlite
+</pre>
+
+<p><b>NOTE :</b> Vous trouverez d'autres examples dans example/*.conf.</p>
+
+<h1>Lancer Mongrel2</h1>
+
+<p>Vous pouvez maintenant lancer Mongrel2 et l'essayer. Vérifiez que vous êtes toujours dans le répertoire des sources de Mongrel2 puis tapez :</p>
+
+<pre>
+mkdir run logs tmp
+m2sh start -host localhost
+</pre>
+
+<p>Dans une autre fenêtre, tapez :</p>
+
+<pre>
+curl http://localhost:6767/tests/sample.html
+hi there
+</pre>
+
+<h1>Quitter Mongrel2</h1>
+
+<p>La combinaison de touches ctrl+c quitte Mongrel2. m2sh a plein d'autre commandes, certaines arrêtent ou redémarrent des choses. Pour plus de détails, tapez <b>m2sh help</b>.</p>
+
+<h1>Pour en savoir plus, consultez le Manuel</h1>
+
+<p>Ceci est une sorte de cours intensif dont le but est de mettre Mongrel2 en route le plus rapidement possible. Vous devriez maintenant aller lire <a href="/doc/tip/docs/manual/book.wiki">le manuel de Mongrel2 (HTML)</a> que nous avons passé bien plus de temps à écrire et à rendre agréable et utile.</p>
+
