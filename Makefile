@@ -1,5 +1,5 @@
 CFLAGS=-g -O2 -Wall -Wextra -Isrc -pthread -rdynamic -DNDEBUG $(OPTFLAGS) -D_FILE_OFFSET_BITS=64 -I /usr/include/lua5.1
-LIBS=-lzmq -ldl -lsqlite3 -llua5.1 $(OPTLIBS)
+LIBS=-lzmq -ldl -llua5.1 $(OPTLIBS)
 PREFIX?=/usr/local
 
 get_objs = $(addsuffix .o,$(basename $(wildcard $(1))))

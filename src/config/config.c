@@ -433,7 +433,8 @@ int Config_load_mimetypes(lua_State* L)
 		bstring value_str = bfromcstr(lua_tostring(L, -1));
 	    check(!tst_search(MIME_MAP, bdata(key_str), blength(value_str)), 
             	"Mimetypes key %s already exists, can't add %s:%s", key_str, key_str, value_str);
-
+		
+		// printf("%s -- %s \n", bdata(key_str), bdata(value_str));
 		// add to global SETTINGS_MAP structure
 		MIME_MAP = tst_insert(MIME_MAP, bdata(key_str), blength(key_str), value_str);
 
@@ -465,6 +466,7 @@ int Config_load_settings(lua_State* L)
 	    check(!tst_search(SETTINGS_MAP, bdata(key_str), blength(value_str)), 
             	"Setting key %s already exists, can't add %s:%s", key_str, key_str, value_str);
 
+		// printf("%s == %s \n", bdata(key_str), bdata(value_str));		            																																					
 		// add to global SETTINGS_MAP structure
 		SETTINGS_MAP = tst_insert(SETTINGS_MAP, bdata(key_str), blength(key_str), value_str);
 
