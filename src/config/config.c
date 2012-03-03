@@ -298,7 +298,9 @@ int Config_load_hosts(lua_State *L, Server *srv, int server_id)
     lua_getfield(L, -1, "hosts");
     check(lua_istable(L, -1), "wrong table parameter: hosts.\n");
     
+	//printf("%d\n", lua_objlen(L, -1));    
     for (i=1; i<=lua_objlen(L, -1); i++) {
+    	//printf("%d\n", i);
     	// push the host[i] into the stack
     	lua_rawgeti(L, -1, i);
         check(lua_istable(L, -1), "wrong table parameter: host %d.\n", i);
@@ -331,7 +333,7 @@ int Config_load_hosts(lua_State *L, Server *srv, int server_id)
             srv->default_host = host;
         }
         
-        lua_pop(L, 1);
+        //lua_pop(L, 1);
     }
     
     log_info("Loaded %d hosts for server %d:%s", i, server_id, bdata(srv->uuid));
