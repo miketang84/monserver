@@ -432,6 +432,7 @@ int Config_load_mimetypes(lua_State* L)
     while (lua_next(L, -2) != 0) {
     	/* uses 'key' (at index -2) and 'value' (at index -1) */
     	bstring key_str = bfromcstr(lua_tostring(L, -2));
+		bReverse(key_str);
 		bstring value_str = bfromcstr(lua_tostring(L, -1));
 	    check(!tst_search(MIME_MAP, bdata(key_str), blength(value_str)), 
             	"Mimetypes key %s already exists, can't add %s:%s", key_str, key_str, value_str);
